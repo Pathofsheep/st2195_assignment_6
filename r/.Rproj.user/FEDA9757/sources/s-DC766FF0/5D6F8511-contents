@@ -20,10 +20,15 @@ if (!("stopwords" %in% installed.packages()))
 {
   install.packages("stopwords")
 }
+if (!("zoo" %in% installed.packages()))
+{
+  install.packages("zoo")
+}
 library("data.table")
 library("dplyr")
 library("tidytext")
 library("stopwords")
+library("zoo")
 
 
 #Load datasets, fix colnames
@@ -41,11 +46,17 @@ df = merge(fx,ecb_speeches, by.x="date",by.y="date", all=TRUE)
 df = df[!is.na(df$date),]
 df = df[order(df$date),]
 
+#merge call the contents of same day together:
+df <- df %>% 
+  group_by(date,rate) %>%
+  summarise(contents = paste(obs.comment, collapse = " "))
+
+
 #2. Remove entries with obvious outliers or mistakes, if any.
 #Some data analyses and getting var's for extreme outliers
 summary(df$rate)
 plot(df$rate)
-#Looks like there are no outliers, but for dfness (3x for extreme outliers):
+#Looks like there are no outliers, but for completeness (3x for extreme outliers):
 
 Tmin = quantile(df$rate,0.25,na.rm = TRUE) - 3 * IQR(df$rate,na.rm = TRUE)
 Tmax = quantile(df$rate,0.75,na.rm = TRUE) + 3 * IQR(df$rate, na.rm = TRUE)
@@ -58,66 +69,23 @@ df = df[(df$rate < Tmax & df$rate > Tmin) | is.na(df$rate),]
 
 # Check every single value for NAs
 # If found, put the mean of the surrounding vars in the new dataframe df_n
-df_n = df
-for(i in 1:length(df$rate))
-{
-  #Check if element has NA
-  if(is.na(df$rate[i]))
-  {
-    #Get Value from the next element (out of bounds check)
-    if(i+1 <= length(df$rate))
-      nextVal = df$rate[i+1]
-    else      
-      nextVal = NA
-    #Get Value from the prev. element (out of bounds check)
-    if(i-1 >= 1)
-      prevVal = df$rate[i-1]
-    else
-      prevVal = NA
-    #If nextVal or prevVal are not NA, replace the value
-    if(!is.na(prevVal) | !is.na(nextVal))
-    {
-      #If one is NA, set them equal
-      if(is.na(prevVal))
-        prevVal = nextVal
-      if(is.na(nextVal))
-        nextVal = prevVal
-      #Temporary vector so we dont have to calc on our own
-      c_temp = c(nextVal,prevVal)
-      df_n$rate[i] = mean(c_temp)
-    }
-  }
-}
+
+df$rate <- na.locf(df$rate, fromLast = TRUE)
+summary(df)
 
 #remove any leftover NAs
-df_n = df_n[!is.na(df_n$rate),]
-
-#put original df back in place, remove temp one from memory
-df = df_n
-rm(df_n)
+df = df[!is.na(df$rate),]
 
 #4. Calculate the exchange rate return. Extend the original dataset with the
 #following variables: “good_news” (equal to 1 when the exchange rate return is
 #larger than 0.5 percent, 0 otherwise) and “bad_news” (equal to 1 when the
 #exchange rate return is lower than -0.5 percent, 0 otherwise).
 
-fx_rate_return = function(fx,fx_prev)
-{
-  return((fx-fx_prev)/fx_prev)
-}
 
-#Add a new column with the previous return rate
-for(i in 1:length(df$rate))
-{
-  df$prev_rate[i] = df$rate[i-1]
-}
-
+df$return <- c(diff(df$rate)/df$rate[-1], 0)
 #Add column good_news
-df$good_news = ifelse(fx_rate_return(df$rate,df$prev_rate) > 0.005,1,0)
-df$bad_news = ifelse(fx_rate_return(df$rate,df$prev_rate) < -0.005,1,0)
-
-#Remove prev_rate with dplyr select
-df = select(df, -c(prev_rate))
+df$good_news = ifelse(df$return > 0.005,1,0)
+df$bad_news = ifelse(df$return < -0.005,1,0)
 
 #5. Remove the entries for which contents column has NA values. Generate and
 #store in csv the following tables:
@@ -125,8 +93,6 @@ df = select(df, -c(prev_rate))
 #associated with entries wherein “good_news” is equal to 1;
 #b. “bad_indicators” – with the 20 most common words (excluding articles,prepositions,etc
 #associated with entries wherein “bad_news” is equal to 1;
-
-
 
 #Remove content = NA
 df = df[!is.na(df$contents),]

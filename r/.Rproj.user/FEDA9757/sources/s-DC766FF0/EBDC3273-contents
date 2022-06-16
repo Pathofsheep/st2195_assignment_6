@@ -1,0 +1,156 @@
+---
+title: "st2195_assignment_6"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Load in the data
+
+
+```{r}
+speeches <- read.csv("speeches.csv", sep = '|')
+speeches <- speeches[,c('date', 'contents')]
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+library(dplyr)
+
+# load in the data, note your paths to the data may be different from what are showing here
+fx <- read.csv("fx.csv", skip = 4, 
+               header = TRUE, check.names=FALSE)
+colnames(fx) <- c("date", "exchange_rate")
+
+```
+
+
+
+
+
+
+If you look at the data carefully, you will see that for the same day, there can be a few speeches:
+```{r}
+nrow(speeches)
+```
+
+```{r}
+length(unique(speeches$date))
+```
+
+In order to merge correctly with the exchange rate data, we do the following to put all the contents together:
+
+```{r}
+speeches <- speeches %>% 
+  group_by(date) %>%
+  summarise(contents = paste(contents, collapse = " "))
+```
+
+```{r}
+nrow(speeches)
+```
+
+Now we can merge the data together:
+```{r}
+# merge data
+df <- fx %>% left_join(speeches)
+
+# change data type
+df$exchange_rate <- as.numeric(df$exchange_rate)
+df$date <- as.Date(df$date)
+```
+
+## Remove entries with obvious outliers or mistakes
+
+We first see if there is any obvious outliers or mistakes by plotting the data:
+```{r}
+plot(df$date, df$exchange_rate, type = 'l', xlab = "date", 
+     ylab = "EUR/USD reference exchange rate")
+```
+
+And look at the summary statistics:
+
+```{r}
+summary(df)
+```
+The data does not seem to have obvious outliers or mistakes, but there is missing data (NA). 
+
+## 3.	Handle missing observations
+
+From the summary above, we have seen that there are some missing data. There are many ways to fill the missing data. Here we use the `na.locf()` from `zoo`:
+
+```{r}
+library(zoo)
+# Note fromLast should set to TRUE as date is in descending order
+df$exchange_rate <- na.locf(df$exchange_rate, fromLast = TRUE)
+summary(df)
+```
+
+Actually if you look at the data carefully, you will see some "date gaps" in the data as well. For this assignment we will not handle them.
+
+## 4. Exchange rate return
+
+Get the return by using the formula: $R_{t} = \frac{P_{t}-P_{t-1}}{P_{t-1}}$
+```{r}
+df$return <- c(diff(df$exchange_rate)/df$exchange_rate[-1], NA)
+```
+
+Extend the dataset with the variables "good_news" and "bad_news"
+```{r}
+df$good_news <- as.numeric(df$return > 0.5/100)
+df$bad_news <- as.numeric(df$return < -0.5/100)
+```
+
+
+
+## 5. Associate words with `good_news`, `bad_news`
+
+Get the contents that associate with `good_news` and `bad_news`:
+```{r}
+library(tidyr)
+# remove rows with NA 
+df <- df %>% drop_na(contents)
+
+# get the contents related to "good_news" and "bad_news"
+good_news_contents <- df$contents[df$good_news==1]
+bad_news_contents <- df$contents[df$bad_news==1]
+```
+
+Load in some stop words, which are words that used to form a sentence but does not add much meaning to a sentence. Example of stop words are "a", "the" "does", "i", etc. 
+```{r}
+stop_words <- read.csv("stopwords.txt", header = FALSE)[,1]
+```
+
+The function below helps us to get the most common words (excluding stop_words) related to `good_news` and `bad_news`. Please read the comments to understand how it works:
+```{r}
+library(text2vec)
+get_word_freq <- function(contents, stop_words, num_words) {
+  # turn a paragraph to a vector of words
+  words <- unlist(lapply(contents, word_tokenizer))  
+  # turn all words to lowercase
+  words <- tolower(words)
+  # find out the number of appearance of each word
+  freq <- table(words)
+  # remove the stop words
+  freq <- freq[!(names(freq) %in% stop_words)]
+  # sort the words from appearing most to least
+  names(freq[order(-freq)])[1:num_words]
+}
+```
+
+Use the function above to get the 20 most common words associated with `good_news` and `bad_news`:
+```{r}
+good_indicators <- get_word_freq(good_news_contents, stop_words, num_words = 20)
+bad_indicators <- get_word_freq(bad_news_contents, stop_words, num_words = 20)
+good_indicators
+bad_indicators
+```
+
+Note that many terms appear in both. 
